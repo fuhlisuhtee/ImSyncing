@@ -34,6 +34,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .nav-count { border-radius: 20px; min-width: 20px; padding: 2px 6px; background: #27576a; color: #b6e4dd; font-size: 10px; text-align: center; }
 .side-label-lower { margin-top: 35px; }
 .offline-dot { width: 7px; height: 7px; border-radius: 50%; background: #dbb66a; margin-left: auto; margin-right: 5px; }
+.offline-dot.online-dot { background: #50a68d; }
 .sidebar-spacer { flex: 1; min-height: 38px; }
 .sidebar-note { margin: 14px 5px 0; padding: 14px 13px 12px; background: #19384d; border: 1px solid #26495e; border-radius: 10px; }
 .note-icon { color: #72c4b8; margin-bottom: 7px; }
@@ -172,6 +173,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .view-more { border: 0; background: none; padding: 10px 0; color: #4386a1; font-size: 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
 .not-connected-badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #edf0f2; padding: 5px 8px; border-radius: 20px; color: #8998a2; white-space: nowrap; font-size: 8px; font-weight: 600; }
 .not-connected-badge span, .status-dot { width: 6px; height: 6px; border-radius: 50%; background: #d8b46b; }
+.connected-badge { border-color: #dcefe8; color: #46856f; }
+.connected-badge span, .integration-status-connected .status-dot { background: #50a68d; }
 .service-preview { margin-top: 12px; }
 .service-preview-row { display: flex; align-items: center; gap: 9px; min-height: 41px; border-top: 1px solid #f0f3f5; color: #50697a; font-size: 10px; font-weight: 500; }
 .service-icon, .integration-icon { display: grid; place-items: center; border-radius: 7px; }
@@ -241,8 +244,21 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .file-table-row { min-height: 47px; border-top: 1px solid #f0f3f5; color: #83949f; font-size: 9px; }
 .file-name { display: flex; align-items: center; gap: 9px; min-width: 0; color: #486276; font-size: 10px; font-weight: 600; }
 .file-name .service-icon { flex: 0 0 auto; }
+.file-name a { overflow: hidden; color: inherit; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.file-name a:hover { color: #287eac; }
 .file-no-results { padding: 27px 8px; text-align: center; color: #8b9ba6; font-size: 10px; }
 .file-connect-link { display: flex; align-items: center; gap: 6px; border: 0; background: none; padding: 12px 0 2px; color: #4386a1; font-size: 9px; font-weight: 600; cursor: pointer; }
+.file-preview-button { border: 0; background: transparent; padding: 4px 0; color: #4386a1; font-size: 9px; font-weight: 600; cursor: pointer; }
+.google-file-preview { margin-top: 16px; overflow: hidden; border: 1px solid #e8eef1; border-radius: 7px; background: #fbfcfc; }
+.google-file-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; border-bottom: 1px solid #e8eef1; }
+.google-file-preview-heading h3 { margin: 0; color: #486276; font-size: 11px; }
+.google-file-preview-heading span { color: #8b9ba6; font-size: 8px; }
+.google-file-preview pre { max-height: 330px; overflow: auto; margin: 0; padding: 13px; color: #526b7a; font: 10px/1.6 "Segoe UI", sans-serif; white-space: pre-wrap; }
+.sheet-preview-table { max-height: 330px; overflow: auto; padding: 8px; }
+.sheet-preview-row { display: flex; min-width: max-content; }
+.sheet-preview-row span { min-width: 100px; max-width: 220px; overflow: hidden; padding: 7px; border: 1px solid #e9eff2; background: white; color: #526b7a; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.integration-error, .integration-message { margin: 12px 0; color: #8c6b45; font-size: 9px; line-height: 1.5; }
+.integration-error { color: #a64e43; }
 
 .signal-banner { min-height: 82px; padding: 16px 19px; border: 1px solid #e5eef0; border-radius: 10px; background: linear-gradient(100deg, #f1f8f8, #f7fafb); display: flex; align-items: center; gap: 13px; }
 .signal-banner-icon { width: 38px; height: 38px; display: grid; place-items: center; background: white; color: #4b9597; border-radius: 10px; box-shadow: 0 1px 4px rgba(31,82,89,.06); }
@@ -280,6 +296,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .calendar-markers { display: flex; gap: 3px; padding-top: 3px; }
 .calendar-markers i, .calendar-legend i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
 .marker-mock { background: #d3b16a; }
+.marker-google { background: #4a79b6; }
 .marker-task { background: #43a69a; }
 .calendar-legend { display: flex; gap: 16px; padding-top: 12px; color: #909fa8; font-size: 8px; }
 .calendar-legend span { display: flex; align-items: center; gap: 5px; }
@@ -293,6 +310,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .agenda-dot-mock { background: #d3b16a; }
 .agenda-item > div { display: grid; gap: 5px; }
 .agenda-item strong { color: #486276; font-size: 10px; font-weight: 600; }
+.agenda-item a { text-decoration: none; }
+.agenda-item a:hover strong { color: #287eac; }
 .agenda-item span { display: flex; align-items: center; gap: 6px; color: #96a4ad; font-size: 8px; }
 .agenda-note { display: flex; align-items: flex-start; gap: 6px; border-top: 1px solid #eef2f4; margin-top: auto; padding-top: 12px; color: #9a9f91; font-size: 8px; line-height: 1.5; }
 .agenda-note svg { flex: 0 0 auto; color: #77a49c; }

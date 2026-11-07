@@ -18,13 +18,12 @@ import {
   Inbox,
   LayoutDashboard,
   ListTodo,
-  Mail,
+  LogOut,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
   Plus,
   Search,
-  Settings2,
   ShieldCheck,
   Signal,
   Sparkles,
@@ -34,6 +33,7 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { signIn, signOut, useSession } from "next-auth/react";
 
 type View = "overview" | "tasks" | "calendar" | "files" | "archives" | "connections";
 type Effort = "Light" | "Medium" | "Heavy" | "Intensive";
@@ -46,6 +46,21 @@ type Task = {
   weight: number;
   completed: boolean;
   mock?: boolean;
+};
+type DriveFile = {
+  id: string;
+  name: string;
+  mimeType: string;
+  modifiedTime?: string;
+  webViewLink?: string;
+  size?: string;
+};
+type GoogleCalendarEvent = {
+  id: string;
+  summary?: string;
+  start?: { date?: string; dateTime?: string };
+  end?: { date?: string; dateTime?: string };
+  htmlLink?: string;
 };
 
 const STORAGE_KEY = "im-syncing-tasks";
@@ -62,11 +77,10 @@ const navigation: { id: View; label: string; icon: typeof LayoutDashboard }[] = 
 ];
 
 const integrations = [
-  { name: "Google Drive", detail: "Browse and organize your files", icon: Folder, color: "drive" },
-  { name: "Google Calendar", detail: "See events and deadlines", icon: CalendarDays, color: "calendar" },
-  { name: "Google Docs", detail: "Create and open documents", icon: FileText, color: "docs" },
-  { name: "Google Sheets", detail: "Keep your spreadsheets close", icon: Table2, color: "sheets" },
-  { name: "Gmail", detail: "Email tools, when you're ready", icon: Mail, color: "gmail" },
+  { name: "Google Drive", detail: "Browse your files · read-only", icon: Folder, color: "drive" },
+  { name: "Google Calendar", detail: "See events and deadlines · read-only", icon: CalendarDays, color: "calendar" },
+  { name: "Google Docs", detail: "Preview documents · read-only", icon: FileText, color: "docs" },
+  { name: "Google Sheets", detail: "Preview spreadsheets · read-only", icon: Table2, color: "sheets" },
 ];
 
 const mockFiles = [
@@ -78,13 +92,31 @@ const mockFiles = [
   { name: "TEST 06", type: "Google Doc", detail: "Edited yesterday", icon: FileText, color: "docs" },
 ];
 
-const mockCalendarEvents = [
-  { day: 3, title: "TEST 01", kind: "Mock event" },
-  { day: 8, title: "TEST 02", kind: "Mock event" },
-  { day: 14, title: "TEST 03", kind: "Mock event" },
-  { day: 21, title: "TEST 04", kind: "Mock event" },
-  { day: 27, title: "TEST 05", kind: "Mock event" },
-];
+async function requestApi<T>(url: string): Promise<T> {
+  const response = await fetch(url, { cache: "no-store" });
+  const data = (await response.json()) as T & { error?: string };
+  if (!response.ok) throw new Error(data.error ?? "The request failed.");
+  return data;
+}
+
+function getCalendarEventDate(event: GoogleCalendarEvent) {
+  if (event.start?.dateTime) {
+    const date = new Date(event.start.dateTime);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+  return event.start?.date ?? "";
+}
+
+function toLocalRfc3339(date: Date) {
+  const offset = -date.getTimezoneOffset();
+  const sign = offset >= 0 ? "+" : "-";
+  const hours = String(Math.floor(Math.abs(offset) / 60)).padStart(2, "0");
+  const minutes = String(Math.abs(offset) % 60).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}T00:00:00${sign}${hours}:${minutes}`;
+}
 
 function getUrgencyMultiplier(dueDate: string) {
   if (!dueDate) return null;
@@ -301,13 +333,48 @@ function TaskDialog({
   );
 }
 
-function CalendarPage({ tasks }: { tasks: Task[] }) {
+function CalendarPage({ tasks, connected, onConnect }: {
+  tasks: Task[];
+  connected: boolean;
+  onConnect: () => void;
+}) {
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [selectedDay, setSelectedDay] = useState(() => new Date().getDate());
+  const [events, setEvents] = useState<GoogleCalendarEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsError, setEventsError] = useState("");
   const monthLabel = new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(month);
   const firstWeekday = month.getDay();
   const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
   const cellCount = Math.ceil((firstWeekday + daysInMonth) / 7) * 7;
+
+  useEffect(() => {
+    if (!connected) {
+      setEvents([]);
+      return;
+    }
+
+    let active = true;
+    const timeMin = toLocalRfc3339(new Date(month.getFullYear(), month.getMonth(), 1));
+    const timeMax = toLocalRfc3339(new Date(month.getFullYear(), month.getMonth() + 1, 1));
+    const params = new URLSearchParams({ timeMin, timeMax });
+    setEventsLoading(true);
+    setEventsError("");
+    requestApi<{ items?: GoogleCalendarEvent[] }>(`/api/google/calendar?${params}`)
+      .then((data) => {
+        if (active) setEvents(data.items ?? []);
+      })
+      .catch((error: unknown) => {
+        if (active) setEventsError(error instanceof Error ? error.message : "Could not load Google Calendar events.");
+      })
+      .finally(() => {
+        if (active) setEventsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [month, connected]);
 
   function changeMonth(offset: number) {
     setMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
@@ -316,7 +383,7 @@ function CalendarPage({ tasks }: { tasks: Task[] }) {
 
   const selectedDate = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}-${String(selectedDay).padStart(2, "0")}`;
   const selectedTasks = tasks.filter((task) => task.dueDate === selectedDate);
-  const selectedMockEvents = mockCalendarEvents.filter((event) => event.day === selectedDay);
+  const selectedEvents = events.filter((event) => getCalendarEventDate(event) === selectedDate);
 
   return (
     <div className="calendar-layout">
@@ -334,30 +401,38 @@ function CalendarPage({ tasks }: { tasks: Task[] }) {
           {Array.from({ length: cellCount }, (_, index) => {
             const day = index - firstWeekday + 1;
             const inMonth = day > 0 && day <= daysInMonth;
-            const hasMock = inMonth && mockCalendarEvents.some((event) => event.day === day);
-            const hasTask = inMonth && tasks.some((task) => task.dueDate === `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
+            const date = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+            const hasEvent = inMonth && events.some((event) => getCalendarEventDate(event) === date);
+            const hasTask = inMonth && tasks.some((task) => task.dueDate === date);
             return (
               <button
                 type="button"
                 role="gridcell"
-                aria-label={inMonth ? `${monthLabel} ${day}${hasMock ? ", mock event" : ""}${hasTask ? ", task due" : ""}` : "Outside current month"}
+                aria-label={inMonth ? `${monthLabel} ${day}${hasEvent ? ", Google Calendar event" : ""}${hasTask ? ", task due" : ""}` : "Outside current month"}
                 key={index}
                 disabled={!inMonth}
                 className={`calendar-day${inMonth ? "" : " calendar-day-outside"}${day === selectedDay && inMonth ? " calendar-day-selected" : ""}`}
                 onClick={() => inMonth && setSelectedDay(day)}
               >
-                {inMonth && <><span className="calendar-day-number">{day}</span><span className="calendar-markers">{hasMock && <i className="marker-mock" />}{hasTask && <i className="marker-task" />}</span></>}
+                {inMonth && <><span className="calendar-day-number">{day}</span><span className="calendar-markers">{hasEvent && <i className="marker-google" />}{hasTask && <i className="marker-task" />}</span></>}
               </button>
             );
           })}
         </div>
-        <div className="calendar-legend"><span><i className="marker-mock" /> Mock preview event</span><span><i className="marker-task" /> Task due date</span></div>
+        <div className="calendar-legend"><span><i className="marker-google" /> Google Calendar event</span><span><i className="marker-task" /> Task due date</span></div>
       </section>
       <aside className="content-card calendar-agenda">
         <span className="section-overline">SELECTED DAY</span>
         <h2>{new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date(`${selectedDate}T12:00:00`))}</h2>
-        {selectedTasks.length === 0 && selectedMockEvents.length === 0 ? (
-          <EmptyState icon={CalendarDays} title="Nothing scheduled" description="Tasks with due dates will appear here. Preview events are marked MOCK." />
+        {eventsError && <p className="integration-error" role="alert">{eventsError}</p>}
+        {eventsLoading && <p className="integration-message">Loading Google Calendar…</p>}
+        {selectedTasks.length === 0 && selectedEvents.length === 0 && !eventsLoading ? (
+          <EmptyState
+            icon={CalendarDays}
+            title={connected ? "Nothing scheduled" : "Connect Google Calendar"}
+            description={connected ? "Events from this Google Calendar and tasks with due dates will appear here." : "Sign in to load your Google Calendar events."}
+            action={!connected ? <button className="text-button empty-action" onClick={onConnect}>Connect Google account <ArrowRight size={14} /></button> : undefined}
+          />
         ) : (
           <div className="agenda-list">
             {selectedTasks.map((task) => (
@@ -366,21 +441,25 @@ function CalendarPage({ tasks }: { tasks: Task[] }) {
                 <div><strong>{task.title}</strong><span>{task.mock ? "Mock task" : "Task due"}{task.mock && <span className="mock-tag">MOCK</span>}</span></div>
               </div>
             ))}
-            {selectedMockEvents.map((event) => (
-              <div className="agenda-item" key={event.title}>
-                <i className="agenda-dot agenda-dot-mock" />
-                <div><strong>{event.title}</strong><span>{event.kind}<span className="mock-tag">MOCK</span></span></div>
+            {selectedEvents.map((event) => (
+              <div className="agenda-item" key={event.id}>
+                <i className="agenda-dot" />
+                <div>
+                  {event.htmlLink ? <a href={event.htmlLink} target="_blank" rel="noreferrer"><strong>{event.summary || "Untitled event"}</strong></a> : <strong>{event.summary || "Untitled event"}</strong>}
+                  <span>Google Calendar event{event.start?.dateTime ? ` · ${new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(new Date(event.start.dateTime))}` : " · All day"}</span>
+                </div>
               </div>
             ))}
           </div>
         )}
-        <div className="agenda-note"><ShieldCheck size={14} /> Preview data only. Calendar is not connected.</div>
+        <div className="agenda-note"><ShieldCheck size={14} /> {connected ? "Read-only events loaded from your Google Calendar." : "Calendar events are not connected."}</div>
       </aside>
     </div>
   );
 }
 
 export default function Home() {
+  const { data: session, status: sessionStatus } = useSession();
   const [view, setView] = useState<View>("overview");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -390,6 +469,18 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [fileQuery, setFileQuery] = useState("");
+  const [driveFiles, setDriveFiles] = useState<DriveFile[]>([]);
+  const [driveLoading, setDriveLoading] = useState(false);
+  const [driveError, setDriveError] = useState("");
+  const [filePreview, setFilePreview] = useState<{
+    title: string;
+    kind: "document" | "spreadsheet";
+    text?: string;
+    values?: (string | number | boolean)[][];
+  } | null>(null);
+  const [filePreviewLoading, setFilePreviewLoading] = useState(false);
+  const [filePreviewError, setFilePreviewError] = useState("");
+  const connected = sessionStatus === "authenticated";
 
   useEffect(() => {
     try {
@@ -404,6 +495,36 @@ export default function Home() {
       setLoaded(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (view !== "files" || !connected) return;
+
+    let active = true;
+    setDriveLoading(true);
+    setDriveError("");
+    requestApi<{ files?: DriveFile[] }>("/api/google/drive")
+      .then((data) => {
+        if (active) setDriveFiles(data.files ?? []);
+      })
+      .catch((error: unknown) => {
+        if (active) setDriveError(error instanceof Error ? error.message : "Could not load Google Drive files.");
+      })
+      .finally(() => {
+        if (active) setDriveLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [view, connected]);
+
+  useEffect(() => {
+    if (connected) return;
+    setDriveFiles([]);
+    setDriveError("");
+    setFilePreview(null);
+    setFilePreviewError("");
+  }, [connected]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -492,6 +613,35 @@ export default function Home() {
     setTasks((current) => current.filter((task) => !task.mock));
   }
 
+  async function previewGoogleFile(file: DriveFile) {
+    const isDocument = file.mimeType === "application/vnd.google-apps.document";
+    const isSpreadsheet = file.mimeType === "application/vnd.google-apps.spreadsheet";
+    if (!isDocument && !isSpreadsheet) return;
+
+    setFilePreview(null);
+    setFilePreviewError("");
+    setFilePreviewLoading(true);
+    try {
+      const endpoint = isDocument
+        ? `/api/google/docs/${encodeURIComponent(file.id)}`
+        : `/api/google/sheets/${encodeURIComponent(file.id)}`;
+      if (isDocument) {
+        const document = await requestApi<{ title: string; text: string }>(endpoint);
+        setFilePreview({ kind: "document", ...document });
+      } else {
+        const spreadsheet = await requestApi<{
+          title: string;
+          values: (string | number | boolean)[][];
+        }>(endpoint);
+        setFilePreview({ kind: "spreadsheet", ...spreadsheet });
+      }
+    } catch (error) {
+      setFilePreviewError(error instanceof Error ? error.message : "Could not preview this file.");
+    } finally {
+      setFilePreviewLoading(false);
+    }
+  }
+
   function toggleSidebar() {
     setSidebarCollapsed((current) => {
       const next = !current;
@@ -510,6 +660,8 @@ export default function Home() {
   const unscoredTaskCount = activeTasks.length - taskLoads.length;
   const waterState = getWaterState(workloadScore);
   const filteredMockFiles = mockFiles.filter((file) => file.name.toLowerCase().includes(fileQuery.trim().toLowerCase()));
+  const filteredGoogleFiles = driveFiles.filter((file) => file.name.toLowerCase().includes(fileQuery.trim().toLowerCase()));
+  const accountInitial = session?.user?.name?.trim().charAt(0).toUpperCase() || "Y";
 
   function goTo(nextView: View) {
     setView(nextView);
@@ -519,10 +671,10 @@ export default function Home() {
   const heading = {
     overview: ["Your workspace", "A little more organized, one day at a time."],
     tasks: ["The Tide", "Keep an eye on what's coming in."],
-    calendar: ["Calendar", "A preview of how deadlines and events can come together."],
+    calendar: ["Calendar", "Your Google events and task deadlines, side by side."],
     files: ["Cargo Hold", "Your files stay yours, right in Google Drive."],
     archives: ["The Deep", "A quiet place for what's already done."],
-    connections: ["The Signal", "Your Google services, when you're ready to connect."],
+    connections: ["The Signal", "Connect and manage your Google services."],
   }[view];
 
   return (
@@ -547,17 +699,17 @@ export default function Home() {
         <div className="side-label side-label-lower">ACCOUNT</div>
         <button aria-label={sidebarCollapsed ? "The Signal" : undefined} title={sidebarCollapsed ? "The Signal" : undefined} onClick={() => goTo("connections")} className={`nav-item${view === "connections" ? " nav-active" : ""}`}>
           <Signal size={18} strokeWidth={1.85} /><span>The Signal</span>
-          <span className="offline-dot" title="Google services not connected" />
+          <span className={`offline-dot${connected ? " online-dot" : ""}`} title={connected ? "Google account connected" : "Google services not connected"} />
         </button>
         <div className="sidebar-note">
           <div className="note-icon"><ShieldCheck size={17} /></div>
-          <p><strong>Your space, your pace.</strong><br />No account connected yet.</p>
+          <p><strong>Your space, your pace.</strong><br />{connected ? "Google account connected." : "No account connected yet."}</p>
           <button onClick={() => goTo("connections")}>Learn about connections <ArrowRight size={13} /></button>
         </div>
         <div className="sidebar-spacer" />
         <div className="sidebar-profile">
-          <div className="avatar">Y</div>
-          <div className="profile-copy"><strong>Your workspace</strong><span>Personal edition</span></div>
+          <div className="avatar">{accountInitial}</div>
+          <div className="profile-copy"><strong>{session?.user?.name ?? "Your workspace"}</strong><span>{session?.user?.email ?? "Personal edition"}</span></div>
         </div>
       </aside>
 
@@ -578,7 +730,7 @@ export default function Home() {
               />
             </label>
             <span className="topbar-divider" />
-            <div className="topbar-avatar" aria-label="Personal workspace">Y</div>
+            <div className="topbar-avatar" aria-label={session?.user?.name ?? "Personal workspace"}>{accountInitial}</div>
           </div>
         </header>
 
@@ -656,8 +808,8 @@ export default function Home() {
                 </button>
                 <button className="stat-card" onClick={() => goTo("connections")}>
                   <span className="stat-top"><span className="stat-icon stat-teal"><Cloud size={17} /></span><span className="stat-arrow"><ArrowUpRight size={16} /></span></span>
-                  <span className="stat-value">0<span className="stat-out-of"> / 5</span></span><span className="stat-label">Services connected</span>
-                  <span className="stat-foot">Connect only what you need</span>
+                  <span className="stat-value">{connected ? integrations.length : 0}<span className="stat-out-of"> / {integrations.length}</span></span><span className="stat-label">Services connected</span>
+                  <span className="stat-foot">{connected ? "Read-only access enabled" : "Connect only what you need"}</span>
                 </button>
               </div>
 
@@ -685,19 +837,19 @@ export default function Home() {
                 <section className="content-card connection-card">
                   <div className="card-heading">
                     <div><span className="section-overline">KEEP IT CONNECTED</span><h2>Your services</h2></div>
-                    <span className="not-connected-badge"><span /> Not connected</span>
+                    <span className={`not-connected-badge${connected ? " connected-badge" : ""}`}><span /> {connected ? "Connected" : "Not connected"}</span>
                   </div>
                   <div className="service-preview">
                     {integrations.slice(0, 3).map(({ name, icon: Icon, color }) => (
                       <div className="service-preview-row" key={name}>
-                        <span className={`service-icon ${color}`}><Icon size={16} /></span><span>{name}</span><span className="service-offline">Not connected</span>
+                        <span className={`service-icon ${color}`}><Icon size={16} /></span><span>{name}</span><span className="service-offline">{connected ? "Read-only" : "Not connected"}</span>
                       </div>
                     ))}
                   </div>
                   <button className="connection-card-footer" onClick={() => goTo("connections")}>Manage connections <ArrowRight size={15} /></button>
                 </section>
               </div>
-              <div className="privacy-footnote"><ShieldCheck size={14} /> Your tasks are saved in this browser. Google services are not connected.</div>
+              <div className="privacy-footnote"><ShieldCheck size={14} /> Your tasks stay in this browser. Google data is accessed read-only{connected ? " through your connected account." : " after you connect an account."}</div>
             </>
           )}
 
@@ -750,37 +902,71 @@ export default function Home() {
           {view === "files" && (
             <section className="content-card full-card resource-page">
               <div className="card-heading">
-                <div><span className="section-overline">GOOGLE DRIVE · UI PREVIEW</span><h2>Your cargo, in one place</h2></div>
-                <span className="mock-tag mock-tag-strong">MOCK CONTENT</span>
+                <div><span className="section-overline">{connected ? "GOOGLE DRIVE · READ-ONLY" : "GOOGLE DRIVE · UI PREVIEW"}</span><h2>Your cargo, in one place</h2></div>
+                {connected ? <span className="not-connected-badge connected-badge"><span /> Connected</span> : <span className="mock-tag mock-tag-strong">MOCK CONTENT</span>}
               </div>
-              <div className="mock-preview-note"><ShieldCheck size={14} /> These TEST rows are mock data for the UI preview, not files from your Google Drive. Google Drive is not connected.</div>
+              {!connected && <div className="mock-preview-note"><ShieldCheck size={14} /> These TEST rows are mock data for the UI preview, not files from your Google Drive.</div>}
+              {driveError && <p className="integration-error" role="alert">{driveError}</p>}
+              {driveLoading && <p className="integration-message">Loading your Google Drive files…</p>}
               <div className="file-browser-toolbar">
                 <div className="file-breadcrumb"><FolderOpen size={15} /><span>My Drive</span><ChevronRight size={14} /><strong>All files</strong></div>
-                <label className="file-search"><Search size={15} /><input aria-label="Search preview files" placeholder="Search test files" value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} /></label>
+                <label className="file-search"><Search size={15} /><input aria-label="Search Drive files" placeholder={connected ? "Search Drive files" : "Search test files"} value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} /></label>
               </div>
               <div className="file-table">
                 <div className="file-table-head"><span>Name</span><span>Type</span><span>Details</span><span>Source</span></div>
-                {filteredMockFiles.map(({ name, type, detail, icon: Icon, color }) => (
+                {connected ? filteredGoogleFiles.map((file) => {
+                  const isDocument = file.mimeType === "application/vnd.google-apps.document";
+                  const isSpreadsheet = file.mimeType === "application/vnd.google-apps.spreadsheet";
+                  const isFolder = file.mimeType === "application/vnd.google-apps.folder";
+                  const Icon = isFolder ? Folder : isSpreadsheet ? Table2 : FileText;
+                  const color = isFolder ? "drive" : isSpreadsheet ? "sheets" : isDocument ? "docs" : "gmail";
+                  const type = isFolder ? "Folder" : isSpreadsheet ? "Google Sheet" : isDocument ? "Google Doc" : file.mimeType.split("/").pop() ?? "File";
+                  const modified = file.modifiedTime
+                    ? new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(new Date(file.modifiedTime))
+                    : "—";
+                  return (
+                    <div className="file-table-row" key={file.id}>
+                      <span className="file-name"><span className={`service-icon ${color}`}><Icon size={16} /></span>{file.webViewLink ? <a href={file.webViewLink} target="_blank" rel="noreferrer">{file.name}</a> : file.name}</span>
+                      <span>{type}</span>
+                      <span>{modified}</span>
+                      <span>{isDocument || isSpreadsheet ? <button className="file-preview-button" onClick={() => previewGoogleFile(file)}>Preview</button> : "Drive"}</span>
+                    </div>
+                  );
+                }) : filteredMockFiles.map(({ name, type, detail, icon: Icon, color }) => (
                   <div className="file-table-row" key={name}>
                     <span className="file-name"><span className={`service-icon ${color}`}><Icon size={16} /></span>{name}</span>
                     <span>{type}</span><span>{detail}</span><span><span className="mock-tag">MOCK</span></span>
                   </div>
                 ))}
-                {filteredMockFiles.length === 0 && <div className="file-no-results">No matching TEST files.</div>}
+                {connected && !driveLoading && filteredGoogleFiles.length === 0 && <div className="file-no-results">{fileQuery ? "No matching Drive files." : "No files found in Google Drive."}</div>}
+                {!connected && filteredMockFiles.length === 0 && <div className="file-no-results">No matching TEST files.</div>}
               </div>
-              <button className="file-connect-link" onClick={() => goTo("connections")}>See how Drive will connect later <ArrowRight size={14} /></button>
+              {filePreviewLoading && <p className="integration-message">Loading file preview…</p>}
+              {filePreviewError && <p className="integration-error" role="alert">{filePreviewError}</p>}
+              {connected && filePreview && (
+                <section className="google-file-preview">
+                  <div className="google-file-preview-heading"><h3>{filePreview.title}</h3><span>{filePreview.kind === "document" ? "Google Docs" : "Google Sheets"} · read-only</span></div>
+                  {filePreview.kind === "document"
+                    ? <pre>{filePreview.text || "This document has no text content."}</pre>
+                    : filePreview.values?.length
+                      ? <div className="sheet-preview-table">{filePreview.values.map((row, rowIndex) => <div className="sheet-preview-row" key={rowIndex}>{row.map((cell, cellIndex) => <span key={cellIndex}>{cell}</span>)}</div>)}</div>
+                      : <p className="integration-message">This spreadsheet is empty.</p>}
+                </section>
+              )}
+              {!connected && <button className="file-connect-link" onClick={() => goTo("connections")}>Connect Google Drive <ArrowRight size={14} /></button>}
+              {connected && filePreview && <button className="file-connect-link" onClick={() => setFilePreview(null)}>Close file preview <ArrowRight size={14} /></button>}
               <div className="file-capabilities">
                 <div><Folder size={17} /><span>Browse folders and files</span></div>
                 <div><Search size={17} /><span>Search your Drive</span></div>
-                <div><BookOpen size={17} /><span>Open Docs and Sheets</span></div>
+                <div><BookOpen size={17} /><span>Preview Docs and Sheets</span></div>
               </div>
             </section>
           )}
 
           {view === "calendar" && (
             <>
-              <div className="mock-inline-note calendar-mock-note"><span className="mock-tag mock-tag-strong">MOCK PREVIEW</span> Calendar events below are TEST data. Tasks you add with due dates also appear here.</div>
-              <CalendarPage tasks={tasks} />
+              {!connected && <div className="mock-inline-note calendar-mock-note"><span className="mock-tag mock-tag-strong">LOCAL TASKS</span> Sign in to show Google Calendar events. Tasks you add with due dates also appear here.</div>}
+              <CalendarPage tasks={tasks} connected={connected} onConnect={() => goTo("connections")} />
             </>
           )}
 
@@ -802,24 +988,28 @@ export default function Home() {
             <>
               <section className="signal-banner">
                 <div className="signal-banner-icon"><Signal size={20} /></div>
-                <div><strong>Your Google account isn’t connected</strong><p>Connection setup will be added in a later phase. No sign-in or API calls happen in this prototype.</p></div>
-                <span className="not-connected-badge"><span /> Not connected</span>
+                <div>
+                  <strong>{connected ? `Connected${session?.user?.name ? ` as ${session.user.name}` : ""}` : "Connect your Google account"}</strong>
+                  <p>{connected ? `${session?.user?.email ?? "Google account"} · Read-only access to Drive, Calendar, Docs, and Sheets.` : "Sign in with Google to browse Drive, see Calendar events, and preview Docs and Sheets. Gmail is not requested."}</p>
+                </div>
+                {connected
+                  ? <button className="button button-quiet" onClick={() => signOut()}><LogOut size={15} /> Sign out</button>
+                  : <button className="button button-primary" onClick={() => signIn("google")} disabled={sessionStatus === "loading"}>{sessionStatus === "loading" ? "Checking…" : "Continue with Google"}</button>}
               </section>
               <div className="integration-grid">
                 {integrations.map(({ name, detail, icon: Icon, color }) => (
                   <article className="integration-card" key={name}>
                     <div className={`integration-icon ${color}`}><Icon size={19} /></div>
                     <div className="integration-copy"><h2>{name}</h2><p>{detail}</p></div>
-                    <div className="integration-status"><span className="status-dot" /> Not connected</div>
-                    <button className="button button-disabled" disabled aria-label={`${name} connection is not available yet`}><Settings2 size={15} /> Coming later</button>
+                    <div className={`integration-status${connected ? " integration-status-connected" : ""}`}><span className="status-dot" /> {connected ? "Read-only access active" : "Not connected"}</div>
                   </article>
                 ))}
               </div>
-              <div className="security-note"><ShieldCheck size={17} /><div><strong>Designed to connect on your terms</strong><p>When integrations are built, you’ll choose which Google services to authorize. This UI preview requests no permissions and stores no Google credentials.</p></div></div>
+              <div className="security-note"><ShieldCheck size={17} /><div><strong>Read-only Google access</strong><p>Google tokens are kept in an encrypted, HttpOnly Auth.js cookie; API calls use them server-side, and client-side code never receives the raw tokens. Your tasks remain in this browser. To revoke the Google grant entirely, remove this app from your Google Account’s third-party connections.</p></div></div>
             </>
           )}
         </div>
-        <footer className="app-footer"><span>Made for calmer waters <span className="footer-wave">~</span></span><span>UI preview <i /> Google services are off</span></footer>
+        <footer className="app-footer"><span>Made for calmer waters <span className="footer-wave">~</span></span><span>{connected ? "Google read-only access active" : "Google services are off"} <i /></span></footer>
       </section>
 
       {(dialogOpen || taskBeingEdited) && (

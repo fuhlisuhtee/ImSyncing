@@ -1,8 +1,12 @@
-I'm Syncing!
+I'm Syncing! — Project Details
+
+> Status note: This file began as brainstorming. The implementation has since narrowed the scope. The `docs/requirements.md`, `docs/technical-documentation.md`, `docs/installation-guide.md`, and `docs/srs.md` documents describe the current repository. Ideas below that are not reflected in those current documents are future possibilities, not implemented features.
 
 Motto: Sync or Sink? Don't let your files drown (even if your academic life is.)
 
-Purpose: A centralized personal workspace that organizes academic and professional activities while integrating Google Workspace services into one convenient interface.
+Current purpose: A personal browser workspace for managing locally stored tasks and viewing selected Google Workspace data through read-only integrations. It provides an Overview, task list (The Tide), Calendar, Drive file view (Cargo Hold), completed tasks (The Deep), and Google connection settings (The Signal).
+
+Original vision: A centralized personal workspace that organizes academic and professional activities while integrating Google Workspace services into one convenient interface. This wider vision remains a possible direction, not a description of all current capabilities.
 
 Instead of constantly switching between Google Drive, Docs, Sheets, Calendar, and Gmail, you can manage the important parts of your workflow through one application.
 
@@ -11,9 +15,22 @@ Technology stack:
 - Backend: Next.js server-side functionality
 - Authentication: Google OAuth 2.0
 - External integrations: Google APIs
-- Database: PostgreSQL or SQLite (decision still open)
+- Database: None in current implementation. Task data is stored in browser local storage. PostgreSQL/SQLite was an unmade brainstorm decision.
 - Development tools: Node.js, npm, Git, VS Code
-Google Apps Script will not be part of the main architecture or if it's usefull it can be used
+Google Apps Script is not part of the current architecture.
+
+## Current implementation summary
+
+- Tasks can be created, edited, completed, deleted, searched, filtered, and viewed in the completed-work archive. Task records are local to the browser.
+- The workload score combines each active dated task's weight with a due-date urgency multiplier. Undated tasks are unscored.
+- Calendar displays local task due dates and, after Google sign-in, read-only events from the primary Google Calendar.
+- Google Drive listing is metadata-only and bounded to 50 records. Google Docs and Sheets can be previewed read-only; the sheet preview reads A1:Z20 from the first sheet.
+- The app requests Google identity, Drive metadata, Calendar read, Docs read, and Sheets read scopes. It does not request Gmail access.
+- No application database, server-side task sync, Google file mutation, Docs/Sheets editing, or Calendar event writing is implemented.
+
+## Future ideas from the initial concept
+
+The following remain possible future scope and should not be presented as existing behavior: database-backed task sync, categories and project hierarchy, task-to-calendar synchronization, Drive create/rename/move/delete operations, Docs/Sheets creation or editing, Gmail, reminders, and progress tracking.
 
 1. The five main modules
 Module 1 — Authentication / Login
@@ -32,7 +49,7 @@ Since this is a personal application, you don't need a complicated registration 
 Google OAuth 2.0 will handle the authentication and authorization process.
 Module 2 — Dashboard
 
-Purpose: Your central overview of everything happening in your academic and professional life.
+Purpose: Your central overview of everything happening across your work and personal life.
 
 Main features:
 - Upcoming deadlines.
@@ -40,7 +57,7 @@ Main features:
 - Calendar overview.
 - Recently accessed files.
 - Quick access to Google services.
-- Academic progress overview.
+- Project progress overview.
 
 
 This is the first page you see after logging in.
@@ -60,16 +77,12 @@ Main features:
 
 
 Example task organization:
-Academic
- └── Year 3
-      └── 1st Semester
-           ├── COMP 015
-           │    ├── Research Proposal
-           │    └── RRL Activity
-           ├── COMP 016
-           │    └── Website Project
-           └── COMP 018
-                └── Database Activity
+Projects
+ └── Project A
+      ├── Research task
+      └── Reading task
+ └── Project B
+      └── Website task
 
 
 You could eventually expand this to support freelance and personal projects.
@@ -83,25 +96,21 @@ Main features:
 - Rename and move files.
 - Delete files.
 - Search and filter files.
-- Organize files by academic year, semester, and subject.
+- Organize files by category, project, and topic.
 - Open documents directly in Google Docs or Sheets.
 
 
 Proposed folder structure:
-Academic/
-├── Year 3/
-│   ├── 1st Semester/
-│   │   ├── COMP 015/
-│   │   │   ├── Lectures/
-│   │   │   ├── Activities/
-│   │   │   ├── Projects/
-│   │   │   └── References/
-│   │   ├── COMP 016/
-│   │   ├── COMP 017/
-│   │   └── ...
-│   └── 2nd Semester/
-├── Year 2/
-└── Year 1/
+Workspace/
+├── Category A/
+│   ├── Project A/
+│   │   ├── Notes/
+│   │   ├── Tasks/
+│   │   ├── Deliverables/
+│   │   └── References/
+│   ├── Project B/
+│   └── ...
+└── Category B/
 
 
 An important design decision: your files remain in Google Drive. Your application manages them through the Drive API rather than storing duplicate copies.
